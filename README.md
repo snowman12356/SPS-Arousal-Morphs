@@ -17,6 +17,8 @@ visible before physics changes.
 - Skyrim AE 1.6.1170 with matching SKSE
 - Address Library for SKSE Plugins
 - Schlong Physics Swapper 2.1.0.2 or newer with compatibility API V2
+- For NPC pages: a Schlong Physics Swapper build with compatibility API V3
+  (without it the player features still work and the NPC pages say so)
 - RaceMenu/SKEE BodyMorph interface V5
 - SKSE Menu Framework 3
 - A morph-enabled BodySlide build containing every configured morph
@@ -75,7 +77,8 @@ until the smoothed extension reaches 100%, then control is released to SPS.
 
 Untick **Temporary SMP hold while extending** (INI `[General] SMPHold=false`)
 to make no SMP request at all. SPS then switches physics on its own schedule,
-so the shaft may go CBPC while the morphs are still extending. The checkbox
+so the shaft may go CBPC while the morphs are still extending, and SPS's
+step-by-step CBPC rise then plays during the growth, which looks less smooth. The checkbox
 saves immediately and releases any active hold.
 
 During a SexLab or OStim scene that SPS is controlling, every slider is held at
