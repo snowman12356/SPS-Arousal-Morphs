@@ -10,7 +10,6 @@
 namespace SPSArousalMorphs {
 namespace {
 DebugMenu* g_debugMenu{ nullptr };
-constexpr std::size_t kMaximumMorphs = 32;
 constexpr auto kSectionName = "SPS Arousal Morphs";
 constexpr ImGuiMCP::ImVec4 kAmber{ 1.0F, 0.72F, 0.20F, 1.0F };
 constexpr ImGuiMCP::ImVec4 kRed{ 1.0F, 0.45F, 0.35F, 1.0F };
@@ -110,15 +109,25 @@ void DebugMenu::Draw()
     ImGuiMCP::Separator();
 
     auto saved = settings_.Snapshot();
+    // These two save at once, but only their own value: unapplied edits in
+    // draft_ wait for Apply settings.
     bool enabled = saved.enabled;
     if (ImGuiMCP::Checkbox("Enable addon", &enabled)) {
-        draft_.enabled = enabled;
-        SavePlayerDraft();
+        auto updated = settings_.Snapshot();
+        updated.enabled = enabled;
+        if (settings_.UpdateAndSave(std::move(updated))) {
+            draft_.enabled = enabled;
+            controller_.QueueSettingsChanged();
+        }
     }
     bool smpHold = saved.smpHold;
     if (ImGuiMCP::Checkbox("Temporary SMP hold while extending", &smpHold)) {
-        draft_.smpHold = smpHold;
-        SavePlayerDraft();
+        auto updated = settings_.Snapshot();
+        updated.smpHold = smpHold;
+        if (settings_.UpdateAndSave(std::move(updated))) {
+            draft_.smpHold = smpHold;
+            controller_.QueueSettingsChanged();
+        }
     }
 
     ImGuiMCP::TextWrapped(
@@ -245,7 +254,11 @@ void DebugMenu::DrawNpcPage(NpcPage& page)
     ImGuiMCP::BeginChild("##sps_npc_page", ImGuiMCP::ImVec2(0.0F, available.y), 0);
 
     ImGuiMCP::TextColored(kBlue, "%s", draft.name.c_str());
-    ImGuiMCP::TextDisabled("%s  %08X", draft.plugin.c_str(), draft.localFormID);
+    if (draft.runtime) {
+        ImGuiMCP::TextDisabled("Runtime-created, this save only  %08X", draft.localFormID);
+    } else {
+        ImGuiMCP::TextDisabled("%s  %08X", draft.plugin.c_str(), draft.localFormID);
+    }
     ImGuiMCP::Separator();
 
     ImGuiMCP::Checkbox("Enabled for this NPC", &draft.enabled);
@@ -408,11 +421,12 @@ void DebugMenu::AddCrosshairNpc()
         SetNpcMessage("No NPC in the crosshair.");
         return;
     }
-    const auto* file = actor->GetFile(0);
-    if (actor->IsDynamicForm() || !file) {
-        // A game-created reference has a different ID in every save, so an
-        // INI entry shared by all saves could not find it again.
-        SetNpcMessage(std::format("{} was created at runtime and can't be saved to the shared list.", actor->GetName()));
+    // A game-created reference has a different ID in every save, so it cannot
+    // go in the shared INI; it is kept in this save's cosave instead.
+    const bool runtime = actor->IsDynamicForm();
+    const auto* file = runtime ? nullptr : actor->GetFile(0);
+    if (!runtime && !file) {
+        SetNpcMessage(std::format("{} has no source plugin and can't be added.", actor->GetName()));
         return;
     }
 
@@ -423,14 +437,20 @@ void DebugMenu::AddCrosshairNpc()
     }
 
     NpcSetting added;
-    added.plugin = file->GetFilename();
-    added.localFormID = actor->GetLocalFormID();
+    if (runtime) {
+        added.runtime = true;
+        added.localFormID = actor->GetFormID();
+    } else {
+        added.plugin = file->GetFilename();
+        added.localFormID = actor->GetLocalFormID();
+    }
     added.name = actor->GetName();
     added.startGrowingArousal = settings.startGrowingArousal;
     added.fullyExtendedArousal = settings.fullyExtendedArousal;
     added.extensionSeconds = settings.extensionSeconds;
     added.retractionSeconds = settings.retractionSeconds;
-    added.morphs = settings.morphs;
+    // A new NPC starts with no morphs; the player's list is not copied.
+    added.morphs.clear();
 
     const auto key = added.Key();
     if (std::any_of(settings.npcs.begin(), settings.npcs.end(),
@@ -447,7 +467,9 @@ void DebugMenu::AddCrosshairNpc()
     }
     controller_.OnSettingsChanged();
     SyncNpcPages();
-    SetNpcMessage(std::format("Added {}.", name));
+    SetNpcMessage(runtime
+            ? std::format("Added {} (runtime-created: kept in this save's cosave, written when you save).", name)
+            : std::format("Added {}.", name));
     logger::info("Added NPC {} ({})", name, key);
 }
 

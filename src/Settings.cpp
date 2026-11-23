@@ -10,7 +10,20 @@ constexpr auto kSettingsPath = "Data/SKSE/Plugins/SPSArousalMorphs.ini";
 // Settings file used before the rename. Read only when the new file is missing,
 // then saved under the new name; the old file is left untouched.
 constexpr auto kLegacySettingsPath = "Data/SKSE/Plugins/SPSRetractableAddon.ini";
-constexpr std::size_t kMaximumMorphs = 32;
+// Local form IDs hold 24 bits; anything larger would add into the load-order
+// index in TESDataHandler::LookupFormID and find a form in another plugin.
+constexpr std::uint32_t kMaximumLocalFormID = 0x00FFFFFF;
+constexpr std::uint32_t kFirstRuntimeFormID = 0xFF000000;
+// SKSE cosave: unique plugin ID, record type and version.
+constexpr std::uint32_t kRuntimeNpcRecord = 'RNPC';
+constexpr std::uint32_t kRuntimeNpcVersion = 1;
+constexpr std::uint32_t kMaximumCosaveString = 256;
+
+// SimpleIni parses with strtod, which accepts "nan"; std::clamp passes NaN through.
+float Finite(float value, float fallback)
+{
+    return std::isfinite(value) ? value : fallback;
+}
 
 std::string Trim(std::string value)
 {
@@ -24,10 +37,11 @@ std::string Trim(std::string value)
 
 void NormalizeTiming(float& start, float& full, float& extension, float& retraction)
 {
-    start = std::clamp(start, 0.0F, 99.0F);
-    full = std::clamp(full, start + 1.0F, 100.0F);
-    extension = std::clamp(extension, 0.1F, 30.0F);
-    retraction = std::clamp(retraction, 0.1F, 30.0F);
+    const Settings defaults;
+    start = std::clamp(Finite(start, defaults.startGrowingArousal), 0.0F, 99.0F);
+    full = std::clamp(Finite(full, defaults.fullyExtendedArousal), start + 1.0F, 100.0F);
+    extension = std::clamp(Finite(extension, defaults.extensionSeconds), 0.1F, 30.0F);
+    retraction = std::clamp(Finite(retraction, defaults.retractionSeconds), 0.1F, 30.0F);
 }
 
 void NormalizeMorphs(std::vector<MorphSetting>& morphs)
@@ -40,8 +54,9 @@ void NormalizeMorphs(std::vector<MorphSetting>& morphs)
         if (morph.name.empty() || names.contains(morph.name)) {
             continue;
         }
-        morph.retractedValue = std::clamp(morph.retractedValue, -3.0F, 3.0F);
-        morph.extendedValue = std::clamp(morph.extendedValue, -3.0F, 3.0F);
+        const MorphSetting defaults;
+        morph.retractedValue = std::clamp(Finite(morph.retractedValue, defaults.retractedValue), -3.0F, 3.0F);
+        morph.extendedValue = std::clamp(Finite(morph.extendedValue, defaults.extendedValue), -3.0F, 3.0F);
         names.insert(morph.name);
         normalized.push_back(std::move(morph));
         if (normalized.size() == kMaximumMorphs) {
@@ -91,7 +106,18 @@ Settings SettingsStore::Normalize(Settings value)
     std::unordered_set<std::string> keys;
     for (auto& npc : value.npcs) {
         npc.plugin = Trim(std::move(npc.plugin));
-        if (npc.plugin.empty() || npc.localFormID == 0 || !keys.insert(npc.Key()).second) {
+        if (npc.runtime) {
+            if (npc.localFormID < kFirstRuntimeFormID) {
+                continue;
+            }
+        } else if (npc.plugin.empty() || npc.localFormID == 0 || npc.localFormID > kMaximumLocalFormID) {
+            if (npc.localFormID > kMaximumLocalFormID) {
+                logger::warn("Ignoring NPC {} ({}:{:08X}): local form ID is out of range",
+                    npc.name, npc.plugin, npc.localFormID);
+            }
+            continue;
+        }
+        if (!keys.insert(npc.Key()).second) {
             continue;
         }
         NormalizeTiming(npc.startGrowingArousal, npc.fullyExtendedArousal,
@@ -173,6 +199,12 @@ void SettingsStore::Load()
     loaded = Normalize(loaded);
     {
         std::scoped_lock guard(lock_);
+        // Runtime NPCs come from the save's cosave, not the INI; a reload keeps them.
+        for (const auto& npc : value_.npcs) {
+            if (npc.runtime && loaded.npcs.size() < kMaximumNpcs) {
+                loaded.npcs.push_back(npc);
+            }
+        }
         value_ = loaded;
     }
     if (result < 0 || migratedLegacyMorph || migratedLegacyFile) {
@@ -224,10 +256,16 @@ bool SettingsStore::Save(const Settings& value) const
     ini.SetDoubleValue("Timing", "RetractionSeconds", value.retractionSeconds);
     ini.SetLongValue("Morphs", "Count", static_cast<long>(value.morphs.size()));
     SaveMorphs(ini, "Morph", value.morphs);
-    ini.SetLongValue("NPCs", "Count", static_cast<long>(value.npcs.size()));
-    for (std::size_t index = 0; index < value.npcs.size(); ++index) {
+    std::vector<const NpcSetting*> shared;
+    for (const auto& npc : value.npcs) {
+        if (!npc.runtime) {
+            shared.push_back(&npc);
+        }
+    }
+    ini.SetLongValue("NPCs", "Count", static_cast<long>(shared.size()));
+    for (std::size_t index = 0; index < shared.size(); ++index) {
         const auto section = std::format("NPC{}", index + 1);
-        const auto& npc = value.npcs[index];
+        const auto& npc = *shared[index];
         ini.SetValue(section.c_str(), "Plugin", npc.plugin.c_str());
         ini.SetValue(section.c_str(), "LocalFormID", std::format("{:08X}", npc.localFormID).c_str());
         ini.SetValue(section.c_str(), "Name", npc.name.c_str());
@@ -244,5 +282,122 @@ bool SettingsStore::Save(const Settings& value) const
         return false;
     }
     return true;
+}
+
+namespace {
+void WriteString(const SKSE::SerializationInterface* intfc, const std::string& text)
+{
+    const auto length = static_cast<std::uint32_t>(std::min<std::size_t>(text.size(), kMaximumCosaveString));
+    intfc->WriteRecordData(length);
+    intfc->WriteRecordData(text.data(), length);
+}
+
+bool ReadString(const SKSE::SerializationInterface* intfc, std::string& text)
+{
+    std::uint32_t length = 0;
+    if (intfc->ReadRecordData(length) != sizeof(length) || length > kMaximumCosaveString) {
+        return false;
+    }
+    text.assign(length, '\0');
+    return length == 0 || intfc->ReadRecordData(text.data(), length) == length;
+}
+}
+
+void SettingsStore::SaveCosave(const SKSE::SerializationInterface* intfc) const
+{
+    std::vector<NpcSetting> runtime;
+    for (auto& npc : Snapshot().npcs) {
+        if (npc.runtime) {
+            runtime.push_back(std::move(npc));
+        }
+    }
+    if (runtime.empty() || !intfc->OpenRecord(kRuntimeNpcRecord, kRuntimeNpcVersion)) {
+        return;
+    }
+    intfc->WriteRecordData(static_cast<std::uint32_t>(runtime.size()));
+    for (const auto& npc : runtime) {
+        intfc->WriteRecordData(npc.localFormID);
+        WriteString(intfc, npc.name);
+        intfc->WriteRecordData(static_cast<std::uint8_t>(npc.enabled ? 1 : 0));
+        intfc->WriteRecordData(npc.startGrowingArousal);
+        intfc->WriteRecordData(npc.fullyExtendedArousal);
+        intfc->WriteRecordData(npc.extensionSeconds);
+        intfc->WriteRecordData(npc.retractionSeconds);
+        intfc->WriteRecordData(static_cast<std::uint32_t>(npc.morphs.size()));
+        for (const auto& morph : npc.morphs) {
+            WriteString(intfc, morph.name);
+            intfc->WriteRecordData(static_cast<std::uint8_t>(morph.enabled ? 1 : 0));
+            intfc->WriteRecordData(morph.retractedValue);
+            intfc->WriteRecordData(morph.extendedValue);
+        }
+    }
+    logger::info("Saved {} runtime-created NPC(s) to the cosave", runtime.size());
+}
+
+void SettingsStore::RevertCosave()
+{
+    std::scoped_lock guard(lock_);
+    std::erase_if(value_.npcs, [](const NpcSetting& npc) { return npc.runtime; });
+}
+
+void SettingsStore::LoadCosave(const SKSE::SerializationInterface* intfc)
+{
+    std::vector<NpcSetting> restored;
+    std::uint32_t type = 0;
+    std::uint32_t version = 0;
+    std::uint32_t length = 0;
+    while (intfc->GetNextRecordInfo(type, version, length)) {
+        if (type != kRuntimeNpcRecord || version != kRuntimeNpcVersion) {
+            continue;
+        }
+        std::uint32_t count = 0;
+        if (intfc->ReadRecordData(count) != sizeof(count)) {
+            continue;
+        }
+        for (std::uint32_t index = 0; index < count && index < kMaximumNpcs; ++index) {
+            NpcSetting npc;
+            npc.runtime = true;
+            std::uint8_t flag = 0;
+            std::uint32_t morphCount = 0;
+            bool ok = intfc->ReadRecordData(npc.localFormID) == sizeof(npc.localFormID) &&
+                ReadString(intfc, npc.name) &&
+                intfc->ReadRecordData(flag) == sizeof(flag) &&
+                intfc->ReadRecordData(npc.startGrowingArousal) == sizeof(float) &&
+                intfc->ReadRecordData(npc.fullyExtendedArousal) == sizeof(float) &&
+                intfc->ReadRecordData(npc.extensionSeconds) == sizeof(float) &&
+                intfc->ReadRecordData(npc.retractionSeconds) == sizeof(float) &&
+                intfc->ReadRecordData(morphCount) == sizeof(morphCount) &&
+                morphCount <= kMaximumMorphs;
+            npc.enabled = flag != 0;
+            for (std::uint32_t m = 0; ok && m < morphCount; ++m) {
+                MorphSetting morph;
+                std::uint8_t morphFlag = 0;
+                ok = ReadString(intfc, morph.name) &&
+                    intfc->ReadRecordData(morphFlag) == sizeof(morphFlag) &&
+                    intfc->ReadRecordData(morph.retractedValue) == sizeof(float) &&
+                    intfc->ReadRecordData(morph.extendedValue) == sizeof(float);
+                morph.enabled = morphFlag != 0;
+                npc.morphs.push_back(std::move(morph));
+            }
+            if (!ok) {
+                logger::warn("Runtime NPC cosave record is damaged; ignoring the rest of it");
+                break;
+            }
+            restored.push_back(std::move(npc));
+        }
+    }
+    if (restored.empty()) {
+        return;
+    }
+    std::scoped_lock guard(lock_);
+    std::erase_if(value_.npcs, [](const NpcSetting& npc) { return npc.runtime; });
+    for (auto& npc : restored) {
+        if (value_.npcs.size() >= kMaximumNpcs) {
+            break;
+        }
+        value_.npcs.push_back(std::move(npc));
+    }
+    value_ = Normalize(std::move(value_));
+    logger::info("Restored {} runtime-created NPC(s) from the cosave", restored.size());
 }
 }

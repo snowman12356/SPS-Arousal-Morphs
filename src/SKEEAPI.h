@@ -5,13 +5,6 @@
 namespace RE {
 class TESObjectREFR;
 class NiAVObject;
-class TESObjectARMO;
-class TESObjectARMA;
-class NiNode;
-class TESForm;
-class BaseExtraList;
-class BGSTextureSet;
-class Actor;
 class BSGeometry;
 class NiSkinPartition;
 class NiBinaryExtraData;
@@ -92,11 +85,5 @@ public:
 
     using MorphShapeCallback = void (*)(RE::TESObjectREFR*, RE::NiAVObject*, RE::BSGeometry*, RE::NiSkinPartition*, RE::NiBinaryExtraData*);
     virtual void AddMorphShapeCallback(MorphShapeCallback cb, skee_u64 order = 0) = 0;
-};
-
-class ICommandInterface : public IPluginInterface {
-public:
-    using CommandCallback = bool (*)(RE::TESObjectREFR* ref, const char* argumentString);
-    virtual bool RegisterCommand(const char* command, const char* desc, CommandCallback cb) = 0;
 };
 }

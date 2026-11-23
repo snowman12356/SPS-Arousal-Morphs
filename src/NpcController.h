@@ -1,5 +1,6 @@
 #pragma once
 
+#include "SPSAPI.h"
 #include "Settings.h"
 
 namespace SPSArousalMorphs {
@@ -41,8 +42,10 @@ private:
         float arousal{ 0.0F };
         bool sceneKnown{ false };
         bool inScene{ false };
+        SPS::API::SceneRole role{ SPS::API::SceneRole::Unknown };
         float currentExtension{ 0.0F };
         float targetExtension{ 0.0F };
+        std::optional<float> preSceneTarget;
         Clock::time_point loadedAt{};
         Clock::time_point nextRead{};
         std::vector<MorphSetting> appliedMorphs;

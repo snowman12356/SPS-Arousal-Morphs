@@ -32,6 +32,7 @@ void LengthController::BeginGameSession()
     gameReady_ = true;
     currentExtension_ = kFullyExtended;
     targetExtension_ = kFullyExtended;
+    preSceneTarget_.reset();
     lastTick_ = std::chrono::steady_clock::now();
     fullyExtendedSince_.reset();
     lastLoggedState_ = LengthState::Disabled;
@@ -57,6 +58,7 @@ void LengthController::EndGameSession()
     npcs_.EndGameSession();
     currentExtension_ = kFullyExtended;
     targetExtension_ = kFullyExtended;
+    preSceneTarget_.reset();
     Publish(settings_.Snapshot().enabled ? LengthState::WaitingForGame : LengthState::Disabled,
         false, 0.0F);
 }
@@ -72,6 +74,7 @@ void LengthController::OnSettingsChanged()
         sps_.ReleaseSMPHold();
         currentExtension_ = kFullyExtended;
         targetExtension_ = kFullyExtended;
+        preSceneTarget_.reset();
         lastLoggedState_ = LengthState::Disabled;
         Publish(LengthState::Disabled, false, 0.0F);
         logger::info("Addon disabled; its BodyMorph source was cleared");
@@ -85,6 +88,45 @@ void LengthController::OnSettingsChanged()
         settings.extensionSeconds, settings.retractionSeconds, settings.morphs.size());
     if (!gameReady_) {
         Publish(LengthState::WaitingForGame, false, 0.0F);
+    }
+}
+
+void LengthController::ConnectEvents()
+{
+    if (!eventsConnected_) {
+        eventsConnected_ = sps_.RegisterActorEvents(&LengthController::OnSPSEvent, this);
+    }
+}
+
+void __cdecl LengthController::OnSPSEvent(const SPS::API::ActorEvent* event, void* userData)
+{
+    if (!event || !userData || event->size < sizeof(SPS::API::ActorEvent) ||
+        event->actorFormID != SPS::API::kPlayerFormID ||
+        event->kind != SPS::API::ActorEventKind::ArousalChanged || !event->arousalValid) {
+        return;
+    }
+    static_cast<LengthController*>(userData)->HandleArousalEvent(event->arousal, event->inScene != 0);
+}
+
+void LengthController::HandleArousalEvent(float arousal, bool inScene)
+{
+    // Runs on the game thread before SPS evaluates this arousal value, so an
+    // SMP hold taken here is in place before SPS could start its CBPC rise.
+    // Tick handles everything else, including the release.
+    if (!gameReady_.load() || inScene) {
+        return;
+    }
+    const auto settings = settings_.Snapshot();
+    if (!settings.enabled || !settings.smpHold || settings.morphs.empty()) {
+        return;
+    }
+    float erectThreshold = 0.0F;
+    if (sps_.ReadErectThreshold(erectThreshold) != SPS::API::Result::Success ||
+        arousal < erectThreshold) {
+        return;
+    }
+    if (currentExtension_ < kFullyExtended - kExtensionEpsilon) {
+        sps_.HoldSMP();
     }
 }
 
@@ -117,6 +159,7 @@ const char* LengthController::StateName(LengthState state)
     case LengthState::GrowthRange: return "Progressive growth";
     case LengthState::FullLength: return "Fully extended arousal reached";
     case LengthState::SceneExtended: return "Scene active - held fully extended";
+    case LengthState::SceneFollowingArousal: return "Scene active - not penetrating, holding pre-scene length";
     default: return "Unknown";
     }
 }
@@ -192,21 +235,38 @@ void LengthController::Tick(std::uint64_t generation)
     LengthState state = LengthState::Retracted;
 
     const bool sceneActive = sps_.IsSceneControllingPlayer();
-    if (sceneActive) {
-        targetExtension_ = kFullyExtended;
-        state = LengthState::SceneExtended;
-    } else if (arousal >= settings.fullyExtendedArousal) {
-        targetExtension_ = kFullyExtended;
+    // With SPS V4 a scene holds full extension only while the player
+    // penetrates. In any other scene stage (receiving, or no role) the morph
+    // stays at the length it had before the scene. Older SPS reports no role,
+    // so every scene holds full extension.
+    const bool sceneHoldsFull = sceneActive &&
+        (!sps_.HasSceneRole() || sps_.ReadPlayerSceneRole() == SPS::API::SceneRole::Penetrating);
+    float arousalTarget = kFullyRetracted;
+    if (arousal >= settings.fullyExtendedArousal) {
+        arousalTarget = kFullyExtended;
         state = LengthState::FullLength;
     } else if (arousal <= settings.startGrowingArousal) {
-        targetExtension_ = kFullyRetracted;
         state = LengthState::Retracted;
     } else {
-        targetExtension_ = std::clamp(
+        arousalTarget = std::clamp(
             (arousal - settings.startGrowingArousal) /
                 (settings.fullyExtendedArousal - settings.startGrowingArousal),
             0.0F, 1.0F);
         state = LengthState::GrowthRange;
+    }
+    if (!sceneActive) {
+        preSceneTarget_ = arousalTarget;
+    }
+    if (sceneHoldsFull) {
+        targetExtension_ = kFullyExtended;
+        state = LengthState::SceneExtended;
+    } else if (sceneActive) {
+        // No pre-scene value (scene already running when the game loaded):
+        // follow arousal until one exists.
+        targetExtension_ = preSceneTarget_.value_or(arousalTarget);
+        state = LengthState::SceneFollowingArousal;
+    } else {
+        targetExtension_ = arousalTarget;
     }
 
     const bool spsWantsErectPhysics = arousal >= erectThreshold;
@@ -215,11 +275,11 @@ void LengthController::Tick(std::uint64_t generation)
         currentExtension_ < kFullyExtended - kExtensionEpsilon;
     if (sceneActive || !settings.smpHold) {
         // SPS's scene decision owns physics; never request SMP over it.
-        // With the hold turned off, SPS alone decides physics at all times.
         sps_.ReleaseSMPHold();
         fullyExtendedSince_.reset();
     } else if (spsWantsErectPhysics && extensionWasIncomplete) {
         sps_.HoldSMP();
+        sps_.RefreshRiseHold();
     } else if (!spsWantsErectPhysics) {
         sps_.ReleaseSMPHold();
         fullyExtendedSince_.reset();

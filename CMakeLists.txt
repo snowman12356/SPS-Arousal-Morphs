@@ -5,12 +5,10 @@ project(SPSArousalMorphs VERSION 1.2.1 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# CommonLibSSE-NG comes from the shared codex-references checkout.
 set(COMMONLIB_SSE_SOURCE_DIR
   "${CMAKE_CURRENT_SOURCE_DIR}/../codex-references/native/CommonLibSSE-NG"
   CACHE PATH "Path to the CommonLibSSE-NG source tree")
 
-# COMMONLIB_SSE_FOLDER still overrides the cache entry for one-off builds.
 if(DEFINED ENV{COMMONLIB_SSE_FOLDER})
   set(COMMONLIB_SSE_SOURCE_DIR "$ENV{COMMONLIB_SSE_FOLDER}")
 endif()
@@ -41,8 +39,6 @@ list(APPEND CMAKE_MODULE_PATH "${COMMONLIB_SSE_SOURCE_DIR}/cmake")
 include(CommonLibSSE)
 find_package(SimpleIni CONFIG QUIET)
 
-# The SKSE Menu Framework 3 consumer header comes from the shared
-# codex-references checkout, next to the framework's own source.
 set(SKSE_MENU_FRAMEWORK_INCLUDE_DIR
   "${CMAKE_CURRENT_SOURCE_DIR}/../codex-references/ui"
   CACHE PATH "Directory containing SKSE Menu Framework 3's SKSEMenuFramework.h")

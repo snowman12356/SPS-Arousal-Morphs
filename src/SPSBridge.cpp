@@ -8,6 +8,10 @@ bool HasCapability(std::uint32_t capabilities, SPS::API::Capability capability)
 {
     return (capabilities & static_cast<std::uint32_t>(capability)) != 0;
 }
+
+// SPS ends a rise hold after at most kMaxRiseHoldMilliseconds. Ask for the
+// maximum and renew it well before then.
+constexpr auto kRiseHoldRenewAfter = std::chrono::milliseconds(7000);
 }
 
 bool SPSBridge::Connect()
@@ -56,6 +60,79 @@ bool SPSBridge::Connect()
     logger::info("SPS API detected: V{}, size {}, capabilities 0x{:X}; player supported",
         api_->version, api_->size, capabilities);
     ConnectV3(module);
+    ConnectV4(module);
+    ConnectV5(module);
+    return true;
+}
+
+void SPSBridge::ConnectV4(HMODULE module)
+{
+    const auto getAPI = reinterpret_cast<SPS::API::GetAPIV4Fn>(
+        ::GetProcAddress(module, SPS::API::kGetAPIFunctionNameV4));
+    const auto* candidate = getAPI ? getAPI() : nullptr;
+    if (!candidate || candidate->version != SPS::API::kVersionV4 ||
+        candidate->size < sizeof(SPS::API::InterfaceV4) || !candidate->GetCapabilities ||
+        !candidate->GetActorSceneRole || !candidate->RequestRiseHold || !candidate->ReleaseRiseHold ||
+        !candidate->RegisterActorEventListener || !candidate->UnregisterActorEventListener) {
+        logger::warn("SPS API V4 is unavailable; scenes hold full extension for every role and sudden arousal jumps may race SPS");
+        return;
+    }
+    const auto capabilities = candidate->GetCapabilities();
+    constexpr auto required = SPS::API::kCapabilitySceneRoleReadback |
+        SPS::API::kCapabilityRiseHold | SPS::API::kCapabilityActorEvents;
+    if ((capabilities & required) != required) {
+        logger::warn("SPS API V4 lacks scene role, rise hold or event capabilities (0x{:X}); not used",
+            capabilities);
+        return;
+    }
+    apiV4_ = candidate;
+    logger::info("SPS API V4 detected; scene role, rise hold and arousal events are available");
+}
+
+void SPSBridge::ConnectV5(HMODULE module)
+{
+    const auto getAPI = reinterpret_cast<SPS::API::GetAPIV5Fn>(
+        ::GetProcAddress(module, SPS::API::kGetAPIFunctionNameV5));
+    const auto* candidate = getAPI ? getAPI() : nullptr;
+    if (!candidate || candidate->version != SPS::API::kVersionV5 ||
+        candidate->size < sizeof(SPS::API::InterfaceV5) || !candidate->GetCapabilities ||
+        !candidate->GetAnyActorSceneRole) {
+        logger::warn("SPS API V5 is unavailable; NPC scenes hold full extension for every role");
+        return;
+    }
+    if ((candidate->GetCapabilities() & SPS::API::kCapabilityActorSceneRole) == 0) {
+        logger::warn("SPS API V5 lacks NPC scene roles; NPC scenes hold full extension for every role");
+        return;
+    }
+    apiV5_ = candidate;
+    logger::info("SPS API V5 detected; NPC scene roles are available");
+}
+
+SPS::API::Result SPSBridge::ReadActorSceneRole(std::uint32_t formID, SPS::API::SceneRole& role) const
+{
+    return apiV5_ ? apiV5_->GetAnyActorSceneRole(formID, &role) : SPS::API::Result::NotReady;
+}
+
+SPS::API::SceneRole SPSBridge::ReadPlayerSceneRole() const
+{
+    auto role = SPS::API::SceneRole::Unknown;
+    if (!apiV4_ ||
+        apiV4_->GetActorSceneRole(SPS::API::kPlayerFormID, &role) != SPS::API::Result::Success) {
+        return SPS::API::SceneRole::Unknown;
+    }
+    return role;
+}
+
+bool SPSBridge::RegisterActorEvents(SPS::API::ActorEventCallback callback, void* userData)
+{
+    if (!apiV4_) {
+        return false;
+    }
+    if (apiV4_->RegisterActorEventListener(callback, userData) == 0) {
+        logger::warn("SPS refused the arousal event listener; relying on 50 ms polling");
+        return false;
+    }
+    logger::info("Registered for SPS arousal events");
     return true;
 }
 
@@ -102,6 +179,11 @@ SPS::API::Result SPSBridge::ReadErectThreshold(float& value) const
 
 bool SPSBridge::IsSceneControllingPlayer() const
 {
+    if (apiV3_) {
+        bool inScene = false;
+        return apiV3_->IsActorInScene(SPS::API::kPlayerFormID, &inScene) == SPS::API::Result::Success &&
+            inScene;
+    }
     if (!api_ || !api_->GetState) {
         return false;
     }
@@ -123,12 +205,16 @@ bool SPSBridge::HoldSMP()
     }
 
     holdAttempted_ = true;
+    // Rise hold first, as the SPS API documentation recommends, so SPS cannot
+    // hand the bones to CBPC between the two requests.
+    TakeRiseHold();
     SPS::API::PhysicsRequest request{};
     request.state = SPS::API::PhysicsState::SMP;
     request.requesterName = "SPS Arousal Morphs";
     smpRequest_ = api_->RequestPhysics(&request);
     if (smpRequest_ == 0) {
         logger::error("SPS rejected the temporary SMP hold request");
+        ReleaseRiseHold();
         return false;
     }
 
@@ -139,6 +225,7 @@ bool SPSBridge::HoldSMP()
 
 void SPSBridge::ReleaseSMPHold()
 {
+    ReleaseRiseHold();
     if (smpRequest_ == 0) {
         holdAttempted_ = false;
         return;
@@ -156,5 +243,46 @@ void SPSBridge::ReleaseSMPHold()
         logger::warn("Could not release SPS SMP hold {}; result {}", handle,
             static_cast<std::uint32_t>(result));
     }
+}
+
+void SPSBridge::TakeRiseHold()
+{
+    if (!apiV4_ || riseHold_ != 0) {
+        return;
+    }
+    SPS::API::RiseHoldRequest request{};
+    request.durationMilliseconds = SPS::API::kMaxRiseHoldMilliseconds;
+    request.requesterName = "SPS Arousal Morphs";
+    riseHold_ = apiV4_->RequestRiseHold(&request);
+    if (riseHold_ == 0) {
+        logger::warn("SPS rejected the rise hold; the SMP hold still applies");
+        return;
+    }
+    riseHoldTakenAt_ = std::chrono::steady_clock::now();
+}
+
+void SPSBridge::RefreshRiseHold()
+{
+    if (!apiV4_ || riseHold_ == 0 ||
+        std::chrono::steady_clock::now() - riseHoldTakenAt_ < kRiseHoldRenewAfter) {
+        return;
+    }
+    // Take the new hold before releasing the old one so there is no gap.
+    const auto previous = riseHold_;
+    riseHold_ = 0;
+    TakeRiseHold();
+    apiV4_->ReleaseRiseHold(previous);
+}
+
+void SPSBridge::ReleaseRiseHold()
+{
+    if (!apiV4_ || riseHold_ == 0) {
+        riseHold_ = 0;
+        return;
+    }
+    const auto handle = riseHold_;
+    riseHold_ = 0;
+    // NotFound is normal after a game load or SPS being disabled.
+    apiV4_->ReleaseRiseHold(handle);
 }
 }

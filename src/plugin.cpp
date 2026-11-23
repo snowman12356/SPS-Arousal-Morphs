@@ -58,6 +58,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message)
         break;
     case SKSE::MessagingInterface::kDataLoaded:
         ConnectDependencies();
+        g_controller.ConnectEvents();
         g_menu.Register();
         g_controller.StartWorker();
         break;
@@ -68,6 +69,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message)
     case SKSE::MessagingInterface::kNewGame:
         ConnectDependencies();
         g_controller.BeginGameSession();
+        g_menu.QueueSyncNpcPages();
         break;
     default:
         break;
@@ -101,13 +103,22 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse)
     spdlog::flush_on(spdlog::level::info);
 
     SPSArousalMorphs::g_settings.Load();
+    if (const auto* serialization = SKSE::GetSerializationInterface()) {
+        serialization->SetUniqueID('SAMR');
+        serialization->SetSaveCallback(
+            [](SKSE::SerializationInterface* intfc) { SPSArousalMorphs::g_settings.SaveCosave(intfc); });
+        serialization->SetLoadCallback(
+            [](SKSE::SerializationInterface* intfc) { SPSArousalMorphs::g_settings.LoadCosave(intfc); });
+        serialization->SetRevertCallback(
+            [](SKSE::SerializationInterface*) { SPSArousalMorphs::g_settings.RevertCosave(); });
+    }
     if (!SKSE::GetMessagingInterface()->RegisterListener(SPSArousalMorphs::OnMessage)) {
         logger::critical("Failed to register SKSE message listener");
         return false;
     }
 
-    logger::info("SPS Arousal Morphs 1.2.1 loaded");
+    logger::info("SPS Arousal Morphs {} loaded",
+        SKSE::PluginDeclaration::GetSingleton()->GetVersion().string("."));
     logger::info("Skyrim runtime detected: {}", runtimeVersion);
-    logger::info("SPS remains the physics owner; the addon only requests a temporary SMP hold while extension finishes");
     return true;
 }

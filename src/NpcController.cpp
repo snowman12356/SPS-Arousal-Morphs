@@ -19,6 +19,10 @@ constexpr float kExtensionEpsilon = 0.001F;
 
 RE::FormID ResolveFormID(const NpcSetting& npc)
 {
+    if (npc.runtime) {
+        // Full form ID of a game-created reference, valid in this save only.
+        return npc.localFormID;
+    }
     auto* data = RE::TESDataHandler::GetSingleton();
     return data ? data->LookupFormID(npc.localFormID, npc.plugin) : 0;
 }
@@ -41,6 +45,7 @@ NpcController::State& NpcController::StateFor(const NpcSetting& npc)
 void NpcController::BeginGameSession()
 {
     states_.clear();
+    lastLoggedText_.clear();
     {
         std::scoped_lock guard(statusLock_);
         statuses_.clear();
@@ -87,9 +92,11 @@ void NpcController::ReconcileOwnedMorphs(const Settings& settings)
         }
     }
     morphs_.ClearOwnedMorphsExcept(keep);
-    std::erase_if(states_, [&configured](const auto& item) {
+    const auto notConfigured = [&configured](const auto& item) {
         return !configured.contains(item.first);
-    });
+    };
+    std::erase_if(states_, notConfigured);
+    std::erase_if(lastLoggedText_, notConfigured);
 }
 
 void NpcController::Tick()
@@ -132,8 +139,10 @@ void NpcController::Process(const NpcSetting& npc, float elapsed, Clock::time_po
     if (!actor || !actor->Is3DLoaded() || !actor->Get3D()) {
         state.loaded = false;
         state.snapToTarget = true;
+        state.preSceneTarget.reset();
         state.hasArousal = false;
         state.sceneKnown = false;
+        state.role = SPS::API::SceneRole::Unknown;
         Publish(key, state, "Not loaded nearby");
         return;
     }
@@ -155,6 +164,14 @@ void NpcController::Process(const NpcSetting& npc, float elapsed, Clock::time_po
             state.inScene = inScene;
             state.sceneKnown = true;
         }
+        // NotReady while SPS is still asking; keep the last answer until then.
+        auto role = SPS::API::SceneRole::Unknown;
+        if (state.inScene &&
+            sps_.ReadActorSceneRole(state.formID, role) == SPS::API::Result::Success) {
+            state.role = role;
+        } else if (!state.inScene) {
+            state.role = SPS::API::SceneRole::Unknown;
+        }
     }
 
     const bool inScene = state.sceneKnown && state.inScene;
@@ -169,20 +186,41 @@ void NpcController::Process(const NpcSetting& npc, float elapsed, Clock::time_po
     }
 
     const char* text = "Retracted";
-    if (inScene) {
+    // With SPS V5 a scene holds full extension only while this NPC penetrates;
+    // in any other stage it keeps the length it had before the scene. Older SPS
+    // reports no NPC role, so every scene holds full extension.
+    const bool sceneHoldsFull = inScene &&
+        (!sps_.HasActorSceneRole() || state.role == SPS::API::SceneRole::Penetrating);
+    if (inScene && !sceneHoldsFull && !state.hasArousal && !state.preSceneTarget) {
+        Publish(key, state, "Waiting for arousal from SPS");
+        return;
+    }
+    float arousalTarget = 0.0F;
+    if (state.hasArousal) {
+        if (state.arousal >= npc.fullyExtendedArousal) {
+            arousalTarget = 1.0F;
+            text = "Fully extended";
+        } else if (state.arousal <= npc.startGrowingArousal) {
+            arousalTarget = 0.0F;
+        } else {
+            arousalTarget = std::clamp(
+                (state.arousal - npc.startGrowingArousal) /
+                    (npc.fullyExtendedArousal - npc.startGrowingArousal),
+                0.0F, 1.0F);
+            text = "Progressive growth";
+        }
+    }
+    if (!inScene) {
+        state.preSceneTarget = arousalTarget;
+    }
+    if (sceneHoldsFull) {
         state.targetExtension = 1.0F;
         text = "Scene active - held fully extended";
-    } else if (state.arousal >= npc.fullyExtendedArousal) {
-        state.targetExtension = 1.0F;
-        text = "Fully extended";
-    } else if (state.arousal <= npc.startGrowingArousal) {
-        state.targetExtension = 0.0F;
+    } else if (inScene) {
+        state.targetExtension = state.preSceneTarget.value_or(arousalTarget);
+        text = "Scene active - not penetrating, holding pre-scene length";
     } else {
-        state.targetExtension = std::clamp(
-            (state.arousal - npc.startGrowingArousal) /
-                (npc.fullyExtendedArousal - npc.startGrowingArousal),
-            0.0F, 1.0F);
-        text = "Progressive growth";
+        state.targetExtension = arousalTarget;
     }
 
     if (state.snapToTarget) {

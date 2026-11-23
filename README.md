@@ -1,8 +1,9 @@
 # SPS Arousal Morphs
 
-A small player-only companion for Schlong Physics Swapper. While enabled, it
-reads SPS's live arousal through the SPS V2 API and smoothly drives one or more
-RaceMenu BodyMorph sliders configured in the INI.
+A companion for Schlong Physics Swapper, for the player and for NPCs added
+through its menu. While enabled, it reads SPS's live arousal (SPS API V2 for the
+player, V3 for NPCs) and smoothly drives one or more RaceMenu BodyMorph sliders
+configured in the INI.
 
 The addon never controls FSMP/CBPC directly, changes bones, reloads XML files,
 resets physics, or queries an arousal provider. If arousal jumps past SPS's
@@ -19,6 +20,9 @@ visible before physics changes.
 - Schlong Physics Swapper 2.1.0.2 or newer with compatibility API V2
 - For NPC pages: a Schlong Physics Swapper build with compatibility API V3
   (without it the player features still work and the NPC pages say so)
+- Recommended: a Schlong Physics Swapper build with compatibility API V5, for
+  scene roles (player and NPCs) and a race-free SMP hold (see below). Older SPS
+  still works.
 - RaceMenu/SKEE BodyMorph interface V5
 - SKSE Menu Framework 3
 - A morph-enabled BodySlide build containing every configured morph
@@ -81,10 +85,17 @@ so the shaft may go CBPC while the morphs are still extending, and SPS's
 step-by-step CBPC rise then plays during the growth, which looks less smooth. The checkbox
 saves immediately and releases any active hold.
 
-During a SexLab or OStim scene that SPS is controlling, every slider is held at
-its `ExtendedValue` whatever the arousal, and the addon makes no SMP request.
-Normal arousal behaviour returns when SPS's scene-end delay finishes. This needs
-SPS's `SexLabPPlusOverride` or `OStimOverride` setting on for that framework.
+During a SexLab or OStim scene, the addon makes no SMP request. With SPS API V4
+(player) and V5 (NPCs), the sliders are held at `ExtendedValue` only while SPS
+reports that actor as penetrating; while receiving, or while SPS has not
+identified a role, they follow arousal as usual. With older SPS, every scene
+holds the sliders at `ExtendedValue`. Normal arousal behaviour returns when
+SPS's scene-end delay finishes. This needs SPS's `SexLabPPlusOverride` or
+`OStimOverride` setting on for that framework.
+
+With SPS API V4 the SMP hold also asks SPS to delay its CBPC rise, and the addon
+listens for SPS's arousal events, so a sudden arousal jump is held before SPS
+acts instead of up to 50 ms later.
 
 Extension and retraction use separate time settings. The controller runs only
 while **Enable addon** is checked in **SPS Arousal Morphs → Length Control**.
@@ -108,8 +119,9 @@ times and morph list, starting from the player's settings. Press **Apply
 settings** on that page to save it, or **Remove this NPC** to remove it and clear
 its morphs.
 
-NPCs read arousal from SPS API V3 and are held fully extended during a SexLab or
-OStim scene. The addon makes no physics requests for NPCs. The list lives in the
+NPCs read arousal from SPS API V3. In a SexLab or OStim scene they follow the
+same rule as the player (see Behaviour), using SPS API V5 for their scene role.
+The addon makes no physics requests for NPCs. The list lives in the
 INI and is shared by all saves; up to 32 NPCs can be added. NPCs spawned at
 runtime can't be added, because their ID differs in every save. The body mesh the
 NPC wears must include each morph.

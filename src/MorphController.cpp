@@ -48,22 +48,16 @@ bool MorphController::Connect(SKEE::IInterfaceMap* interfaceMap)
         return false;
     }
 
-    interfaceVersion_ = pluginInterface->GetVersion();
-    if (interfaceVersion_ < SKEE::IBodyMorphInterface::kCurrentPluginVersion) {
+    const auto interfaceVersion = pluginInterface->GetVersion();
+    if (interfaceVersion < SKEE::IBodyMorphInterface::kCurrentPluginVersion) {
         logger::error("RaceMenu/SKEE BodyMorph interface V{} is incompatible; V{} is required",
-            interfaceVersion_, SKEE::IBodyMorphInterface::kCurrentPluginVersion);
-        interfaceVersion_ = 0;
+            interfaceVersion, SKEE::IBodyMorphInterface::kCurrentPluginVersion);
         return false;
     }
 
     bodyMorph_ = static_cast<SKEE::IBodyMorphInterface*>(pluginInterface);
-    logger::info("RaceMenu/SKEE BodyMorph interface V{} detected", interfaceVersion_);
+    logger::info("RaceMenu/SKEE BodyMorph interface V{} detected", interfaceVersion);
     return true;
-}
-
-bool MorphController::CanApply() const
-{
-    return bodyMorph_ && ReadyPlayer();
 }
 
 bool MorphController::ApplyMorphs(const std::vector<MorphSetting>& morphs, float extension)
@@ -89,7 +83,6 @@ bool MorphController::ApplyMorphs(const std::vector<MorphSetting>& morphs, float
         return false;
     }
 
-    extension_ = std::clamp(extension, 0.0F, 1.0F);
     applied_ = true;
     applicationErrorLogged_ = false;
     return true;
@@ -216,7 +209,6 @@ bool MorphController::ClearOwnedMorphs()
     const bool hasLegacy = bodyMorph_->HasBodyMorphKey(player, kLegacyMorphKey);
     if (!bodyMorph_->HasBodyMorphKey(player, kMorphKey) && !hasLegacy) {
         applied_ = false;
-        extension_ = 1.0F;
         return true;
     }
 
@@ -226,7 +218,6 @@ bool MorphController::ClearOwnedMorphs()
         logger::info("Cleared morphs left by the pre-rename source key {}", kLegacyMorphKey);
     }
     applied_ = false;
-    extension_ = 1.0F;
     if (player->Is3DLoaded() && player->Get3D()) {
         bodyMorph_->ApplyBodyMorphs(player, true);
         logger::info("Cleared all addon-owned morphs for source {}", kMorphKey);

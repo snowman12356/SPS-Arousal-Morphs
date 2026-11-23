@@ -13,6 +13,8 @@ public:
 
     void Register();
     void DrawNpcSlot(std::size_t slot);
+    // Rebuilds the NPC pages on the SKSE task thread (after a save is loaded).
+    void QueueSyncNpcPages();
 
 private:
     // The framework's render callback carries no context, so each NPC page is
@@ -34,7 +36,6 @@ private:
     void DrawMorphEditor(std::vector<MorphSetting>& morphs, std::array<char, 128>& newName);
     void SavePlayerDraft();
     void SyncNpcPages();
-    void QueueSyncNpcPages();
     void AddCrosshairNpc();
     void RemoveNpc(const std::string& key);
     void SetNpcMessage(std::string message);
