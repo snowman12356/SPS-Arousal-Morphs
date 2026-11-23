@@ -57,6 +57,7 @@ bool SPSBridge::Connect()
     }
 
     api_ = candidate;
+    found_.store(true, std::memory_order_release);
     logger::info("SPS API detected: V{}, size {}, capabilities 0x{:X}; player supported",
         api_->version, api_->size, capabilities);
     ConnectV3(module);

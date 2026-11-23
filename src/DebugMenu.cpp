@@ -169,6 +169,11 @@ void DebugMenu::Draw()
     }
 
     ImGuiMCP::Separator();
+    if (controller_.SpsApiFound()) {
+        ImGuiMCP::TextWrapped("SPS API: found");
+    } else {
+        ImGuiMCP::TextColored(kAmber, "SPS API: not found");
+    }
     const auto status = controller_.Status();
     ImGuiMCP::TextWrapped("State: %s", LengthController::StateName(status.state));
     if (status.dataReady) {

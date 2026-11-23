@@ -141,6 +141,11 @@ void LengthController::QueueSettingsChanged()
     tasks->AddTask([this]() { OnSettingsChanged(); });
 }
 
+bool LengthController::SpsApiFound() const
+{
+    return sps_.IsFound();
+}
+
 LengthStatus LengthController::Status() const
 {
     std::scoped_lock guard(statusLock_);

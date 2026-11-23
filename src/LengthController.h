@@ -48,6 +48,7 @@ public:
     void QueueSettingsChanged();
 
     [[nodiscard]] LengthStatus Status() const;
+    [[nodiscard]] bool SpsApiFound() const;
     [[nodiscard]] static const char* StateName(LengthState state);
 
 private:

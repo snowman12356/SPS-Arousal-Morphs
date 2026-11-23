@@ -34,6 +34,8 @@ public:
     void RefreshRiseHold();
 
     [[nodiscard]] bool IsConnected() const { return api_ != nullptr; }
+    // For the menu thread: true once SPS's API was found and accepted.
+    [[nodiscard]] bool IsFound() const { return found_.load(std::memory_order_acquire); }
     [[nodiscard]] bool IsHoldingSMP() const { return smpRequest_ != 0; }
 
 private:
@@ -43,6 +45,7 @@ private:
     void TakeRiseHold();
     void ReleaseRiseHold();
 
+    std::atomic<bool> found_{ false };
     const SPS::API::InterfaceV2* api_{ nullptr };
     const SPS::API::InterfaceV3* apiV3_{ nullptr };
     const SPS::API::InterfaceV4* apiV4_{ nullptr };
