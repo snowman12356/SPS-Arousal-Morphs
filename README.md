@@ -88,7 +88,8 @@ saves immediately and releases any active hold.
 During a SexLab or OStim scene, the addon makes no SMP request. With SPS API V4
 (player) and V5 (NPCs), the sliders are held at `ExtendedValue` only while SPS
 reports that actor as penetrating; while receiving, or while SPS has not
-identified a role, they follow arousal as usual. With older SPS, every scene
+identified a role, they stay at the length the arousal curve gave just before the
+scene started. With older SPS, every scene
 holds the sliders at `ExtendedValue`. Normal arousal behaviour returns when
 SPS's scene-end delay finishes. This needs SPS's `SexLabPPlusOverride` or
 `OStimOverride` setting on for that framework.
@@ -115,15 +116,18 @@ Morph1: Penis_Length, retracted -0.50, extended 0.00
 
 Look at an NPC, open **SPS Arousal Morphs -> NPCs** and press **Add NPC in
 crosshair**. The NPC gets its own **NPC: Name** page with its own arousal points,
-times and morph list, starting from the player's settings. Press **Apply
+times and morph list. Arousal points and times start from the player's settings;
+the morph list starts empty, so add the sliders that NPC's body supports. Press **Apply
 settings** on that page to save it, or **Remove this NPC** to remove it and clear
 its morphs.
 
 NPCs read arousal from SPS API V3. In a SexLab or OStim scene they follow the
 same rule as the player (see Behaviour), using SPS API V5 for their scene role.
-The addon makes no physics requests for NPCs. The list lives in the
-INI and is shared by all saves; up to 32 NPCs can be added. NPCs spawned at
-runtime can't be added, because their ID differs in every save. The body mesh the
+The addon makes no physics requests for NPCs. NPCs from a plugin are stored in
+the INI, shared by all saves; up to 32 NPCs can be added. NPCs created at runtime
+(generated or spawned by other mods) are stored in a per-save SKSE cosave instead,
+written when you save the game, and shown as "Runtime-created, this save only".
+Removing the mod leaves no trace in the save beyond that ignorable cosave record. The body mesh the
 NPC wears must include each morph.
 
 ## Adding BodyMorph sliders
