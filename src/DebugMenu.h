@@ -29,8 +29,12 @@ private:
     };
 
     static void __stdcall Render();
+    static void __stdcall RenderPlayer();
     static void __stdcall RenderNpcList();
-    void Draw();
+    void EnsureDraft();
+    [[nodiscard]] bool PlayerDraftDirty(const Settings& saved) const;
+    void DrawOverview();
+    void DrawPlayer();
     void DrawNpcList();
     void DrawNpcPage(NpcPage& page);
     void DrawMorphEditor(std::vector<MorphSetting>& morphs, std::array<char, 128>& newName);

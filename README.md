@@ -86,7 +86,7 @@ step-by-step CBPC rise then plays during the growth, which looks less smooth. Th
 saves immediately and releases any active hold.
 
 During a SexLab or OStim scene, the addon makes no SMP request. What the sliders
-do is set by **During a scene** on the Length Control page (INI `[General]
+do is set by **During a scene** on the Overview page (INI `[General]
 SceneMode`), for the player and for NPCs:
 
 - **Follow role** (`SceneMode=0`, default): with SPS API V4 (player) and V5 (NPCs),
@@ -106,7 +106,7 @@ listens for SPS's arousal events, so a sudden arousal jump is held before SPS
 acts instead of up to 50 ms later.
 
 Extension and retraction use separate time settings. The controller runs only
-while **Enable addon** is checked in **SPS Arousal Morphs → Length Control**.
+while **Mod is on** is checked in **SPS Arousal Morphs → Overview**.
 Turning it off immediately clears only the addon's own BodyMorph source.
 
 The supplied defaults are:
@@ -121,16 +121,18 @@ Morph1: Penis_Length, retracted -0.50, extended 0.00
 
 ## NPCs
 
-Look at an NPC, open **SPS Arousal Morphs -> NPCs** and press **Add NPC in
-crosshair**. The NPC gets its own **NPC: Name** page with its own arousal points,
+Look at an NPC, open **SPS Arousal Morphs -> NPCs** and press **Add the NPC I am
+looking at**. The NPC gets its own **NPC: Name** page with its own arousal points,
 times and morph list. Arousal points and times start from the player's settings;
 the morph list starts empty, so add the sliders that NPC's body supports. Press **Apply
-settings** on that page to save it, or **Remove this NPC** to remove it and clear
+changes** on that page to save it, or **Remove this NPC** to remove it and clear
 its morphs.
 
 NPCs read arousal from SPS API V3. In a SexLab or OStim scene they follow the
 same rule as the player (see Behaviour), using SPS API V5 for their scene role.
-The addon makes no physics requests for NPCs. NPCs from a plugin are stored in
+The addon makes no physics requests for NPCs. NPC arousal is read about once a second; set `[General]
+NpcReadSeconds` in the INI (0.1 to 10) to change that. It is not in the menu. Your own morphs update every 0.05 seconds; `[General]
+PlayerUpdateSeconds` (0.02 to 0.25) changes that, also INI only. NPCs from a plugin are stored in
 the INI, shared by all saves; up to 32 NPCs can be added. NPCs created at runtime
 (generated or spawned by other mods) are stored in a per-save SKSE cosave instead,
 written when you save the game, and shown as "Runtime-created, this save only".
@@ -143,14 +145,13 @@ Sliders can be added in game or by editing the INI.
 
 ### In game
 
-Open the SKSE Menu Framework menu and go to **SPS Arousal Morphs → Length
-Control**. Each BodySlide is its own group, headed by the slider name. The
+Open the SKSE Menu Framework menu and go to **SPS Arousal Morphs → You**. Each BodySlide is its own group, headed by the slider name. The
 **Retracted** and **Extended** sliders under that heading belong to that
-BodySlide. **Enabled** turns that one slider off without deleting it. **Remove**
+BodySlide. **On** turns that one slider off without deleting it. **Remove**
 deletes the group. To add one, type a slider name into the field and press
 **Add**.
 
-Press **Apply settings** to write the INI and start driving the new morph
+Press **Apply changes** to write the INI and start driving the new morph
 immediately. Nothing is written until you apply, so you can experiment freely.
 
 Duplicate names and empty names are highlighted while editing. Only the first
@@ -190,7 +191,7 @@ BodyMorph targets, not percentages, and may range from `-3.00` to `3.00`.
 `Enabled=false` keeps the slider in the list but does not drive it. A missing
 `Enabled` line is treated as on, so older INI files keep working.
 
-Use **Reload INI** on the SKSE Menu Framework page to load external edits
+Use **Reload settings file** (Overview page) on the SKSE Menu Framework page to load external edits
 without restarting Skyrim.
 
 ## In-game diagnostics and recovery
@@ -201,7 +202,7 @@ is active or in its settle period. It warns when **Fully Extended At** is above
 the SPS erect threshold, because that configuration requires the addon to keep
 SMP held until extension can finish.
 
-**Emergency: disable and clear addon morphs** turns the addon off, releases its
+**Turn off and clear morphs** (Overview page) turns the addon off, releases its
 SMP request, and clears every BodyMorph contribution owned by the
 `SPSArousalMorphs` source key. It does not clear morphs belonging to other
 mods.

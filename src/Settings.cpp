@@ -152,6 +152,10 @@ void SettingsStore::Load()
     if (result >= 0) {
         loaded.enabled = ini.GetBoolValue("General", "Enabled", loaded.enabled);
         loaded.smpHold = ini.GetBoolValue("General", "SMPHold", loaded.smpHold);
+        loaded.npcReadSeconds = std::clamp(static_cast<float>(
+            ini.GetDoubleValue("General", "NpcReadSeconds", loaded.npcReadSeconds)), 0.1F, 10.0F);
+        loaded.playerUpdateSeconds = std::clamp(static_cast<float>(
+            ini.GetDoubleValue("General", "PlayerUpdateSeconds", loaded.playerUpdateSeconds)), 0.02F, 0.25F);
         loaded.sceneMode = std::clamp(
             static_cast<int>(ini.GetLongValue("General", "SceneMode", loaded.sceneMode)),
             static_cast<int>(kSceneFollowRole), static_cast<int>(kSceneKeepLength));
@@ -254,6 +258,8 @@ bool SettingsStore::Save(const Settings& value) const
     ini.SetBoolValue("General", "Enabled", value.enabled);
     ini.SetBoolValue("General", "SMPHold", value.smpHold);
     ini.SetLongValue("General", "SceneMode", value.sceneMode);
+    ini.SetDoubleValue("General", "NpcReadSeconds", value.npcReadSeconds);
+    ini.SetDoubleValue("General", "PlayerUpdateSeconds", value.playerUpdateSeconds);
     ini.SetDoubleValue("Length", "StartGrowingArousal", value.startGrowingArousal);
     ini.SetDoubleValue("Length", "FullyExtendedArousal", value.fullyExtendedArousal);
     ini.SetDoubleValue("Timing", "ExtensionSeconds", value.extensionSeconds);

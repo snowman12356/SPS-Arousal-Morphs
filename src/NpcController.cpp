@@ -11,7 +11,6 @@ using namespace std::chrono_literals;
 // NPCs update at half the player's rate; several may be growing at once.
 constexpr auto kTickInterval = 100ms;
 // SPS asks NPC providers from a cache, so reading faster gains nothing.
-constexpr auto kReadInterval = 1s;
 // The first scene answer for an actor takes about a second. If SPS still has
 // none after this, carry on from arousal instead of waiting indefinitely.
 constexpr auto kSceneAnswerTimeout = 5s;
@@ -110,6 +109,7 @@ void NpcController::Tick()
 
     const auto settings = settings_.Snapshot();
     sceneMode_ = settings.sceneMode;
+    readInterval_ = std::chrono::milliseconds(static_cast<std::int64_t>(settings.npcReadSeconds * 1000.0F));
     for (const auto& npc : settings.npcs) {
         Process(npc, elapsed, now);
     }
@@ -154,7 +154,7 @@ void NpcController::Process(const NpcSetting& npc, float elapsed, Clock::time_po
     }
 
     if (now >= state.nextRead) {
-        state.nextRead = now + kReadInterval;
+        state.nextRead = now + readInterval_;
         float arousal = 0.0F;
         if (sps_.ReadActorArousal(state.formID, arousal) == SPS::API::Result::Success) {
             state.arousal = std::clamp(arousal, 0.0F, 100.0F);

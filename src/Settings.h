@@ -49,6 +49,10 @@ struct Settings {
     bool enabled{ false };
     bool smpHold{ true };
     int sceneMode{ kSceneFollowRole };
+    // How often NPC arousal is read from SPS. INI only ([General] NpcReadSeconds).
+    float npcReadSeconds{ 1.0F };
+    // How often your own morphs are updated. INI only ([General] PlayerUpdateSeconds).
+    float playerUpdateSeconds{ 0.05F };
     float startGrowingArousal{ 20.0F };
     float fullyExtendedArousal{ 60.0F };
     float extensionSeconds{ 3.0F };

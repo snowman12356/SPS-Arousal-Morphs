@@ -171,12 +171,16 @@ const char* LengthController::StateName(LengthState state)
 
 void LengthController::Run(std::stop_token stop)
 {
+    std::chrono::milliseconds interval = kTickInterval;
     while (!stop.stop_requested()) {
-        std::this_thread::sleep_for(kTickInterval);
+        std::this_thread::sleep_for(interval);
         if (stop.stop_requested()) {
             return;
         }
-        if (gameReady_.load() && settings_.Snapshot().enabled) {
+        const auto settings = settings_.Snapshot();
+        interval = std::chrono::milliseconds(
+            static_cast<std::int64_t>(settings.playerUpdateSeconds * 1000.0F));
+        if (gameReady_.load() && settings.enabled) {
             QueueTick();
         }
     }

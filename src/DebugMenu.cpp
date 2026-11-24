@@ -20,6 +20,111 @@ bool IsBlank(const std::string& value)
     return value.find_first_not_of(" \t\r\n") == std::string::npos;
 }
 
+constexpr ImGuiMCP::ImVec4 kGold{ 0.79F, 0.64F, 0.36F, 1.0F };
+constexpr ImGuiMCP::ImVec4 kGreen{ 0.45F, 0.85F, 0.55F, 1.0F };
+constexpr ImGuiMCP::ImVec4 kMuted{ 0.62F, 0.65F, 0.70F, 1.0F };
+
+void DrawTitle(const char* title, const char* subtitle)
+{
+    ImGuiMCP::TextColored(kGold, "%s", title);
+    ImGuiMCP::TextDisabled("%s", subtitle);
+    ImGuiMCP::Spacing();
+}
+
+void DrawHint(const char* text)
+{
+    ImGuiMCP::PushStyleColor(ImGuiMCP::ImGuiCol_Text, kMuted);
+    ImGuiMCP::TextWrapped("%s", text);
+    ImGuiMCP::PopStyleColor();
+}
+
+void DrawBar(float fraction, const char* overlay)
+{
+    ImGuiMCP::ProgressBar(std::clamp(fraction, 0.0F, 1.0F), ImGuiMCP::ImVec2(-1.0F, 0.0F), overlay);
+}
+
+bool DrawDangerButton(const char* label)
+{
+    constexpr ImGuiMCP::ImVec4 base{ 0.55F, 0.18F, 0.15F, 1.0F };
+    constexpr ImGuiMCP::ImVec4 hover{ 0.70F, 0.25F, 0.20F, 1.0F };
+    constexpr ImGuiMCP::ImVec4 active{ 0.80F, 0.30F, 0.24F, 1.0F };
+    ImGuiMCP::PushStyleColor(ImGuiMCP::ImGuiCol_Button, base);
+    ImGuiMCP::PushStyleColor(ImGuiMCP::ImGuiCol_ButtonHovered, hover);
+    ImGuiMCP::PushStyleColor(ImGuiMCP::ImGuiCol_ButtonActive, active);
+    const bool pressed = ImGuiMCP::Button(label);
+    ImGuiMCP::PopStyleColor(3);
+    return pressed;
+}
+
+void DrawTip(const char* text)
+{
+    if (ImGuiMCP::IsItemHovered()) {
+        ImGuiMCP::SetTooltip("%s", text);
+    }
+}
+
+ImGuiMCP::ImVec4 StateColor(LengthState state)
+{
+    switch (state) {
+    case LengthState::GrowthRange:
+    case LengthState::FullLength:
+    case LengthState::SceneExtended:
+    case LengthState::SceneFollowingArousal:
+        return kGreen;
+    case LengthState::Retracted:
+        return kBlue;
+    case LengthState::Disabled:
+        return kMuted;
+    default:
+        return kAmber;
+    }
+}
+
+// The same four sliders on the player page and on every NPC page.
+void DrawGrowthSliders(float& start, float& full, float& extend, float& retract)
+{
+    ImGuiMCP::SeparatorText("When it grows");
+    DrawHint("Below the first point the sliders stay soft. Between the two points they grow with arousal. "
+             "Above the second they are fully extended.");
+    ImGuiMCP::SliderFloat("Starts growing at", &start, 0.0F, 99.0F, "%.0f arousal");
+    ImGuiMCP::SliderFloat("Fully extended at", &full, 1.0F, 100.0F, "%.0f arousal");
+    if (start >= full) {
+        ImGuiMCP::TextColored(kAmber, "Fully extended must be higher than where growth starts.");
+    }
+    ImGuiMCP::Spacing();
+    ImGuiMCP::SeparatorText("How fast");
+    ImGuiMCP::SliderFloat("Time to extend", &extend, 0.1F, 30.0F, "%.1f seconds");
+    ImGuiMCP::SliderFloat("Time to retract", &retract, 0.1F, 30.0F, "%.1f seconds");
+}
+
+enum class ApplyChoice { None, Apply, Discard };
+
+ApplyChoice DrawApplyBar(bool dirty)
+{
+    ImGuiMCP::Spacing();
+    ImGuiMCP::Separator();
+    if (dirty) {
+        ImGuiMCP::TextColored(kAmber, "You have unsaved changes.");
+    } else {
+        ImGuiMCP::TextDisabled("All changes saved.");
+    }
+    auto choice = ApplyChoice::None;
+    if (!dirty) {
+        ImGuiMCP::BeginDisabled();
+    }
+    if (ImGuiMCP::Button("Apply changes")) {
+        choice = ApplyChoice::Apply;
+    }
+    ImGuiMCP::SameLine();
+    if (ImGuiMCP::Button("Discard changes")) {
+        choice = ApplyChoice::Discard;
+    }
+    if (!dirty) {
+        ImGuiMCP::EndDisabled();
+    }
+    return choice;
+}
+
 template <std::size_t Slot>
 void __stdcall RenderSlot()
 {
@@ -61,7 +166,8 @@ void DebugMenu::Register()
 
     g_debugMenu = this;
     SKSEMenuFramework::SetSection(kSectionName);
-    SKSEMenuFramework::AddSectionItem("Length Control", Render);
+    SKSEMenuFramework::AddSectionItem("Overview", Render);
+    SKSEMenuFramework::AddSectionItem("You", RenderPlayer);
     SKSEMenuFramework::AddSectionItem("NPCs", RenderNpcList);
     registered_ = true;
     SyncNpcPages();
@@ -72,7 +178,14 @@ void DebugMenu::Register()
 void __stdcall DebugMenu::Render()
 {
     if (g_debugMenu) {
-        g_debugMenu->Draw();
+        g_debugMenu->DrawOverview();
+    }
+}
+
+void __stdcall DebugMenu::RenderPlayer()
+{
+    if (g_debugMenu) {
+        g_debugMenu->DrawPlayer();
     }
 }
 
@@ -93,26 +206,36 @@ void DebugMenu::SavePlayerDraft()
     }
 }
 
-void DebugMenu::Draw()
+void DebugMenu::EnsureDraft()
 {
     if (!draftReady_) {
         draft_ = settings_.Snapshot();
         draftReady_ = true;
     }
+}
 
-    // The page is taller than most windows once a few morphs are added, so scroll
-    // it inside the parent region instead of letting it spill off screen.
+bool DebugMenu::PlayerDraftDirty(const Settings& saved) const
+{
+    return draft_.startGrowingArousal != saved.startGrowingArousal ||
+        draft_.fullyExtendedArousal != saved.fullyExtendedArousal ||
+        draft_.extensionSeconds != saved.extensionSeconds ||
+        draft_.retractionSeconds != saved.retractionSeconds ||
+        draft_.morphs != saved.morphs;
+}
+
+// Page 1: what is happening now, and the settings that apply to everyone.
+// Everything on this page saves at once.
+void DebugMenu::DrawOverview()
+{
+    EnsureDraft();
     const auto available = ImGuiMCP::GetContentRegionAvail();
-    ImGuiMCP::BeginChild("##sps_page", ImGuiMCP::ImVec2(0.0F, available.y), 0);
+    ImGuiMCP::BeginChild("##sps_overview", ImGuiMCP::ImVec2(0.0F, available.y), 0);
 
-    ImGuiMCP::TextColored(kBlue, "SPS AROUSAL MORPHS");
-    ImGuiMCP::Separator();
+    DrawTitle("SPS AROUSAL MORPHS", "Your arousal, shown on your body. Changes on this page save at once.");
 
-    auto saved = settings_.Snapshot();
-    // These two save at once, but only their own value: unapplied edits in
-    // draft_ wait for Apply settings.
+    const auto saved = settings_.Snapshot();
     bool enabled = saved.enabled;
-    if (ImGuiMCP::Checkbox("Enable addon", &enabled)) {
+    if (ImGuiMCP::Checkbox("Mod is on", &enabled)) {
         auto updated = settings_.Snapshot();
         updated.enabled = enabled;
         if (settings_.UpdateAndSave(std::move(updated))) {
@@ -120,22 +243,43 @@ void DebugMenu::Draw()
             controller_.QueueSettingsChanged();
         }
     }
-    bool smpHold = saved.smpHold;
-    if (ImGuiMCP::Checkbox("Temporary SMP hold while extending", &smpHold)) {
-        auto updated = settings_.Snapshot();
-        updated.smpHold = smpHold;
-        if (settings_.UpdateAndSave(std::move(updated))) {
-            draft_.smpHold = smpHold;
-            controller_.QueueSettingsChanged();
+
+    const auto status = controller_.Status();
+    ImGuiMCP::SeparatorText("Right now");
+    ImGuiMCP::TextColored(StateColor(status.state), "%s", LengthController::StateName(status.state));
+    if (controller_.SpsApiFound()) {
+        ImGuiMCP::TextColored(kGreen, "SPS API: found");
+    } else {
+        ImGuiMCP::TextColored(kAmber, "SPS API: not found");
+    }
+    if (status.dataReady) {
+        char overlay[64]{};
+        std::snprintf(overlay, sizeof(overlay), "Arousal  %.0f / 100", status.arousal);
+        DrawBar(status.arousal / 100.0F, overlay);
+        std::snprintf(overlay, sizeof(overlay), "Length  now %.0f%%   target %.0f%%",
+            status.currentExtension * 100.0F, status.targetExtension * 100.0F);
+        DrawBar(status.currentExtension, overlay);
+        if (draft_.fullyExtendedArousal > status.erectThreshold) {
+            ImGuiMCP::TextColored(kAmber,
+                "Your 'fully extended' point is above SPS's erect point (%.0f).", status.erectThreshold);
         }
+        if (saved.smpHold) {
+            ImGuiMCP::TextDisabled("Physics hold: %s",
+                status.holdingSMP ? (status.settlingBeforeRelease ? "active, settling" : "active") : "not needed");
+        }
+    } else {
+        DrawHint("Waiting for arousal from SPS.");
     }
 
-    // Scene behaviour for the player and NPCs. Saves at once, like the two above.
-    ImGuiMCP::TextWrapped("During a scene:");
+    ImGuiMCP::Spacing();
+    ImGuiMCP::SeparatorText("During a scene (you and NPCs)");
     int sceneMode = saved.sceneMode;
-    bool sceneChanged = ImGuiMCP::RadioButton("Follow role (full only while penetrating)", &sceneMode, kSceneFollowRole);
+    bool sceneChanged = ImGuiMCP::RadioButton("Follow role", &sceneMode, kSceneFollowRole);
+    DrawHint("    Fully extended only while penetrating. Otherwise it keeps the length from before the scene.");
     sceneChanged |= ImGuiMCP::RadioButton("Always fully extended", &sceneMode, kSceneAlwaysExtended);
+    DrawHint("    Fully extended for the whole scene.");
     sceneChanged |= ImGuiMCP::RadioButton("Keep the length from before the scene", &sceneMode, kSceneKeepLength);
+    DrawHint("    The length never changes during a scene.");
     if (sceneChanged && sceneMode != saved.sceneMode) {
         auto updated = settings_.Snapshot();
         updated.sceneMode = sceneMode;
@@ -144,37 +288,31 @@ void DebugMenu::Draw()
         }
     }
 
-    ImGuiMCP::TextWrapped(
-        "The addon drives the BodyMorphs listed below. With the SMP hold on, it asks SPS to keep SMP active "
-        "until extension finishes. With it off, SPS alone decides physics.");
-    ImGuiMCP::Separator();
-
-    ImGuiMCP::SliderFloat("Start Growing At", &draft_.startGrowingArousal,
-        0.0F, 99.0F, "%.0f arousal");
-    ImGuiMCP::SliderFloat("Fully Extended At", &draft_.fullyExtendedArousal,
-        1.0F, 100.0F, "%.0f arousal");
-    ImGuiMCP::SliderFloat("Extension Time", &draft_.extensionSeconds, 0.1F, 30.0F, "%.1f seconds");
-    ImGuiMCP::SliderFloat("Retraction Time", &draft_.retractionSeconds, 0.1F, 30.0F, "%.1f seconds");
-
-    ImGuiMCP::Separator();
-    DrawMorphEditor(draft_.morphs, newMorphName_);
-
-    ImGuiMCP::Separator();
-    if (ImGuiMCP::Button("Apply settings")) {
-        const auto current = settings_.Snapshot();
-        draft_.enabled = current.enabled;
-        draft_.smpHold = current.smpHold;
-        draft_.sceneMode = current.sceneMode;
-        SavePlayerDraft();
+    ImGuiMCP::Spacing();
+    ImGuiMCP::SeparatorText("Physics");
+    bool smpHold = saved.smpHold;
+    if (ImGuiMCP::Checkbox("Hold SMP briefly while growing", &smpHold)) {
+        auto updated = settings_.Snapshot();
+        updated.smpHold = smpHold;
+        if (settings_.UpdateAndSave(std::move(updated))) {
+            draft_.smpHold = smpHold;
+            controller_.QueueSettingsChanged();
+        }
     }
-    ImGuiMCP::SameLine();
-    if (ImGuiMCP::Button("Reload INI")) {
+    DrawHint("Keeps physics steady while the sliders grow, then hands control back to SPS. "
+             "Turn it off to let SPS alone decide. Applies to you only.");
+
+    ImGuiMCP::Spacing();
+    ImGuiMCP::SeparatorText("Troubleshooting");
+    if (ImGuiMCP::Button("Reload settings file")) {
         settings_.Load();
         draft_ = settings_.Snapshot();
         controller_.QueueSettingsChanged();
         QueueSyncNpcPages();
     }
-    if (ImGuiMCP::Button("Emergency: disable and clear addon morphs")) {
+    DrawTip("Reads SPSArousalMorphs.ini again, for edits made outside the game.");
+    ImGuiMCP::SameLine();
+    if (DrawDangerButton("Turn off and clear morphs")) {
         auto emergency = settings_.Snapshot();
         emergency.enabled = false;
         if (settings_.UpdateAndSave(std::move(emergency))) {
@@ -182,48 +320,68 @@ void DebugMenu::Draw()
             controller_.QueueSettingsChanged();
         }
     }
-
-    ImGuiMCP::Separator();
-    if (controller_.SpsApiFound()) {
-        ImGuiMCP::TextWrapped("SPS API: found");
-    } else {
-        ImGuiMCP::TextColored(kAmber, "SPS API: not found");
-    }
-    const auto status = controller_.Status();
-    ImGuiMCP::TextWrapped("State: %s", LengthController::StateName(status.state));
-    if (status.dataReady) {
-        ImGuiMCP::TextWrapped("SPS arousal: %.1f / 100", status.arousal);
-        ImGuiMCP::TextWrapped("SPS erect threshold: %.1f / 100", status.erectThreshold);
-        if (draft_.fullyExtendedArousal > status.erectThreshold) {
-            ImGuiMCP::TextColored(kAmber, "Warning: Fully Extended At is above the SPS erect threshold.");
-        }
-    }
-    ImGuiMCP::TextWrapped("Temporary SMP hold: %s",
-        !saved.smpHold ? "Off" :
-        status.holdingSMP ? (status.settlingBeforeRelease ? "Active - settling" : "Active") : "Inactive");
-    ImGuiMCP::TextWrapped("Current extension: %.0f%%", status.currentExtension * 100.0F);
-    ImGuiMCP::TextWrapped("Target extension: %.0f%%", status.targetExtension * 100.0F);
+    DrawTip("Turns the mod off and removes every morph it added. Other mods' morphs are not touched.");
 
     ImGuiMCP::EndChild();
 }
 
+// Page 2: how your own body responds. Edits wait for Apply changes.
+void DebugMenu::DrawPlayer()
+{
+    EnsureDraft();
+    const auto available = ImGuiMCP::GetContentRegionAvail();
+    ImGuiMCP::BeginChild("##sps_player", ImGuiMCP::ImVec2(0.0F, available.y), 0);
+
+    DrawTitle("YOU", "How your body responds to arousal. Press Apply changes to save.");
+
+    DrawGrowthSliders(draft_.startGrowingArousal, draft_.fullyExtendedArousal,
+        draft_.extensionSeconds, draft_.retractionSeconds);
+    ImGuiMCP::Spacing();
+    DrawMorphEditor(draft_.morphs, newMorphName_);
+
+    const auto saved = settings_.Snapshot();
+    switch (DrawApplyBar(PlayerDraftDirty(saved))) {
+    case ApplyChoice::Apply: {
+        const auto current = settings_.Snapshot();
+        draft_.enabled = current.enabled;
+        draft_.smpHold = current.smpHold;
+        draft_.sceneMode = current.sceneMode;
+        SavePlayerDraft();
+        break;
+    }
+    case ApplyChoice::Discard: {
+        const auto current = settings_.Snapshot();
+        draft_.startGrowingArousal = current.startGrowingArousal;
+        draft_.fullyExtendedArousal = current.fullyExtendedArousal;
+        draft_.extensionSeconds = current.extensionSeconds;
+        draft_.retractionSeconds = current.retractionSeconds;
+        draft_.morphs = current.morphs;
+        break;
+    }
+    default:
+        break;
+    }
+
+    ImGuiMCP::EndChild();
+}
+
+// Page 3: add NPCs and see them all at a glance.
 void DebugMenu::DrawNpcList()
 {
     const auto available = ImGuiMCP::GetContentRegionAvail();
     ImGuiMCP::BeginChild("##sps_npc_list", ImGuiMCP::ImVec2(0.0F, available.y), 0);
 
-    ImGuiMCP::TextColored(kBlue, "NPCS");
-    ImGuiMCP::Separator();
-    ImGuiMCP::TextWrapped(
-        "Look at an NPC, open this menu and press Add. Each NPC gets its own page in this section, "
-        "starting from the player's current settings.");
+    DrawTitle("NPCS", "Give any NPC the same arousal-driven body change.");
 
     const auto settings = settings_.Snapshot();
     if (!settings.enabled) {
-        ImGuiMCP::TextColored(kAmber, "The addon is off on the Length Control page, so NPCs are not driven.");
+        ImGuiMCP::TextColored(kAmber, "The mod is off (Overview page), so NPCs are not driven.");
     }
 
-    if (ImGuiMCP::Button("Add NPC in crosshair")) {
+    ImGuiMCP::SeparatorText("Add an NPC");
+    DrawHint("Look at the NPC in the game, open this menu and press the button. Each NPC gets its own page "
+             "in the list on the left. Timing starts from your settings. The slider list starts empty.");
+    if (ImGuiMCP::Button("Add the NPC I am looking at")) {
         if (auto* tasks = SKSE::GetTaskInterface()) {
             tasks->AddTask([this]() { AddCrosshairNpc(); });
         }
@@ -231,15 +389,21 @@ void DebugMenu::DrawNpcList()
     {
         std::scoped_lock guard(npcMessageLock_);
         if (!npcMessage_.empty()) {
-            ImGuiMCP::TextWrapped("%s", npcMessage_.c_str());
+            ImGuiMCP::TextColored(kBlue, "%s", npcMessage_.c_str());
         }
     }
 
-    ImGuiMCP::Separator();
-    ImGuiMCP::TextWrapped("Added NPCs: %zu of %zu", settings.npcs.size(), kMaximumNpcs);
+    ImGuiMCP::Spacing();
+    ImGuiMCP::SeparatorText("Your NPCs");
+    ImGuiMCP::TextDisabled("%zu of %zu", settings.npcs.size(), kMaximumNpcs);
+    if (settings.npcs.empty()) {
+        DrawHint("No NPCs yet.");
+    }
     for (const auto& npc : settings.npcs) {
         const auto status = npcs_.Status(npc.Key());
-        ImGuiMCP::TextWrapped("%s: %s", npc.name.c_str(), status ? status->state : "Waiting for a loaded game");
+        ImGuiMCP::TextColored(kGold, "%s", npc.name.c_str());
+        ImGuiMCP::SameLine();
+        ImGuiMCP::TextDisabled("%s", status ? status->state : "Waiting for a loaded game");
     }
 
     ImGuiMCP::EndChild();
@@ -256,15 +420,16 @@ void DebugMenu::DrawNpcSlot(std::size_t slot)
     }
 }
 
+// One page per NPC.
 void DebugMenu::DrawNpcPage(NpcPage& page)
 {
+    const auto settings = settings_.Snapshot();
+    const auto found = std::find_if(settings.npcs.begin(), settings.npcs.end(),
+        [&page](const NpcSetting& npc) { return npc.Key() == page.key; });
+    if (found == settings.npcs.end()) {
+        return;
+    }
     if (!page.draftReady) {
-        const auto settings = settings_.Snapshot();
-        const auto found = std::find_if(settings.npcs.begin(), settings.npcs.end(),
-            [&page](const NpcSetting& npc) { return npc.Key() == page.key; });
-        if (found == settings.npcs.end()) {
-            return;
-        }
         page.draft = *found;
         page.draftReady = true;
     }
@@ -273,65 +438,82 @@ void DebugMenu::DrawNpcPage(NpcPage& page)
     const auto available = ImGuiMCP::GetContentRegionAvail();
     ImGuiMCP::BeginChild("##sps_npc_page", ImGuiMCP::ImVec2(0.0F, available.y), 0);
 
-    ImGuiMCP::TextColored(kBlue, "%s", draft.name.c_str());
+    ImGuiMCP::TextColored(kGold, "%s", draft.name.c_str());
     if (draft.runtime) {
-        ImGuiMCP::TextDisabled("Runtime-created, this save only  %08X", draft.localFormID);
+        ImGuiMCP::TextDisabled("Created during play. Kept in this save only.  %08X", draft.localFormID);
     } else {
         ImGuiMCP::TextDisabled("%s  %08X", draft.plugin.c_str(), draft.localFormID);
     }
-    ImGuiMCP::Separator();
+    ImGuiMCP::Spacing();
 
     ImGuiMCP::Checkbox("Enabled for this NPC", &draft.enabled);
-    ImGuiMCP::SliderFloat("Start Growing At", &draft.startGrowingArousal, 0.0F, 99.0F, "%.0f arousal");
-    ImGuiMCP::SliderFloat("Fully Extended At", &draft.fullyExtendedArousal, 1.0F, 100.0F, "%.0f arousal");
-    ImGuiMCP::SliderFloat("Extension Time", &draft.extensionSeconds, 0.1F, 30.0F, "%.1f seconds");
-    ImGuiMCP::SliderFloat("Retraction Time", &draft.retractionSeconds, 0.1F, 30.0F, "%.1f seconds");
 
-    ImGuiMCP::Separator();
+    ImGuiMCP::SeparatorText("Right now");
+    if (const auto status = npcs_.Status(page.key)) {
+        ImGuiMCP::TextWrapped("%s", status->state);
+        if (status->hasArousal) {
+            char overlay[64]{};
+            std::snprintf(overlay, sizeof(overlay), "Arousal  %.0f / 100", status->arousal);
+            DrawBar(status->arousal / 100.0F, overlay);
+        }
+        char overlay[64]{};
+        std::snprintf(overlay, sizeof(overlay), "Length  now %.0f%%   target %.0f%%",
+            status->currentExtension * 100.0F, status->targetExtension * 100.0F);
+        DrawBar(status->currentExtension, overlay);
+        if (status->inScene) {
+            ImGuiMCP::TextColored(kBlue, "In a scene");
+        }
+    } else {
+        DrawHint("Waiting for a loaded game.");
+    }
+
+    ImGuiMCP::Spacing();
+    DrawGrowthSliders(draft.startGrowingArousal, draft.fullyExtendedArousal,
+        draft.extensionSeconds, draft.retractionSeconds);
+    ImGuiMCP::Spacing();
     DrawMorphEditor(draft.morphs, page.newMorphName);
 
-    ImGuiMCP::Separator();
-    if (ImGuiMCP::Button("Apply settings")) {
-        auto settings = settings_.Snapshot();
-        const auto found = std::find_if(settings.npcs.begin(), settings.npcs.end(),
+    switch (DrawApplyBar(!(draft == *found))) {
+    case ApplyChoice::Apply: {
+        auto updated = settings_.Snapshot();
+        const auto target = std::find_if(updated.npcs.begin(), updated.npcs.end(),
             [&page](const NpcSetting& npc) { return npc.Key() == page.key; });
-        if (found != settings.npcs.end()) {
-            *found = draft;
-            if (settings_.UpdateAndSave(std::move(settings))) {
+        if (target != updated.npcs.end()) {
+            *target = draft;
+            if (settings_.UpdateAndSave(std::move(updated))) {
                 page.draftReady = false;
                 controller_.QueueSettingsChanged();
             }
         }
+        break;
     }
-    ImGuiMCP::SameLine();
-    if (ImGuiMCP::Button("Remove this NPC")) {
+    case ApplyChoice::Discard:
+        page.draftReady = false;
+        break;
+    default:
+        break;
+    }
+
+    ImGuiMCP::Spacing();
+    ImGuiMCP::SeparatorText("Remove");
+    if (DrawDangerButton("Remove this NPC")) {
         if (auto* tasks = SKSE::GetTaskInterface()) {
             tasks->AddTask([this, key = page.key]() { RemoveNpc(key); });
         }
     }
-
-    ImGuiMCP::Separator();
-    if (const auto status = npcs_.Status(page.key)) {
-        ImGuiMCP::TextWrapped("State: %s", status->state);
-        if (status->hasArousal) {
-            ImGuiMCP::TextWrapped("Arousal: %.1f / 100", status->arousal);
-        }
-        ImGuiMCP::TextWrapped("In scene: %s", status->inScene ? "Yes" : "No");
-        ImGuiMCP::TextWrapped("Current extension: %.0f%%", status->currentExtension * 100.0F);
-        ImGuiMCP::TextWrapped("Target extension: %.0f%%", status->targetExtension * 100.0F);
-    } else {
-        ImGuiMCP::TextWrapped("State: Waiting for a loaded game");
-    }
+    DrawTip("Removes this NPC and clears the morphs the mod added to it.");
 
     ImGuiMCP::EndChild();
 }
 
 void DebugMenu::DrawMorphEditor(std::vector<MorphSetting>& morphs, std::array<char, 128>& newName)
 {
-    ImGuiMCP::TextWrapped("Configured morphs: %zu of %zu", morphs.size(), kMaximumMorphs);
+    ImGuiMCP::SeparatorText("Sliders to move");
+    DrawHint("Each BodySlide slider listed here moves between its Retracted and Extended value. "
+             "The slider must be built into the body mesh, or nothing will happen.");
 
     if (morphs.empty()) {
-        ImGuiMCP::TextColored(kRed, "No valid morphs are configured.");
+        ImGuiMCP::TextColored(kRed, "No sliders yet. Add one below.");
     }
 
     std::optional<std::size_t> removeIndex;
@@ -340,14 +522,12 @@ void DebugMenu::DrawMorphEditor(std::vector<MorphSetting>& morphs, std::array<ch
     for (std::size_t index = 0; index < morphs.size(); ++index) {
         auto& morph = morphs[index];
         ImGuiMCP::PushID(static_cast<int>(index));
+        ImGuiMCP::Spacing();
 
-        if (index > 0) {
-            ImGuiMCP::Dummy(ImGuiMCP::ImVec2(0.0F, 10.0F));
-        }
-
-        const auto title = morph.name.empty() ? std::string("Unnamed BodySlide") : morph.name;
-        ImGuiMCP::SeparatorText(title.c_str());
-        ImGuiMCP::Checkbox("Enabled", &morph.enabled);
+        const auto title = morph.name.empty() ? std::string("Unnamed slider") : morph.name;
+        ImGuiMCP::TextColored(kBlue, "%s", title.c_str());
+        ImGuiMCP::SameLine();
+        ImGuiMCP::Checkbox("On", &morph.enabled);
         ImGuiMCP::SameLine();
         if (ImGuiMCP::SmallButton("Remove")) {
             removeIndex = index;
@@ -362,19 +542,11 @@ void DebugMenu::DrawMorphEditor(std::vector<MorphSetting>& morphs, std::array<ch
             morph.name = nameBuffer.data();
         }
 
-        // Short names go on the slider itself. Long names stay on the heading
-        // above, because a long ImGui label shrinks the slider until it is unusable.
-        const auto retractedLabel = morph.name.size() > 22
-            ? std::format("Retracted##retracted_{}", index)
-            : std::format("{} retracted##retracted_{}", title, index);
-        const auto extendedLabel = morph.name.size() > 22
-            ? std::format("Extended##extended_{}", index)
-            : std::format("{} extended##extended_{}", title, index);
         if (!morph.enabled) {
             ImGuiMCP::BeginDisabled();
         }
-        ImGuiMCP::SliderFloat(retractedLabel.c_str(), &morph.retractedValue, -3.0F, 3.0F, "%.2f");
-        ImGuiMCP::SliderFloat(extendedLabel.c_str(), &morph.extendedValue, -3.0F, 3.0F, "%.2f");
+        ImGuiMCP::SliderFloat("Retracted", &morph.retractedValue, -3.0F, 3.0F, "%.2f");
+        ImGuiMCP::SliderFloat("Extended", &morph.extendedValue, -3.0F, 3.0F, "%.2f");
         if (!morph.enabled) {
             ImGuiMCP::EndDisabled();
         }
@@ -402,15 +574,15 @@ void DebugMenu::DrawMorphEditor(std::vector<MorphSetting>& morphs, std::array<ch
         ImGuiMCP::TextColored(kAmber, "Duplicate name '%s'; only the first entry is kept.", duplicateOf.c_str());
     }
 
+    ImGuiMCP::Spacing();
     if (morphs.size() < kMaximumMorphs) {
-        ImGuiMCP::TextWrapped("Type a BodySlide slider name, then press Enter or click Add:");
         ImGuiMCP::PushItemWidth(-120.0F);
-        const auto submitted = ImGuiMCP::InputTextWithHint("##new_morph", "e.g. Penis_Length",
+        const auto submitted = ImGuiMCP::InputTextWithHint("##new_morph", "Type a slider name, e.g. Penis_Length",
             newName.data(), newName.size(),
             ImGuiMCP::ImGuiInputTextFlags_EnterReturnsTrue);
         ImGuiMCP::PopItemWidth();
         ImGuiMCP::SameLine();
-        if (ImGuiMCP::Button("Add") || submitted) {
+        if (ImGuiMCP::Button("Add slider") || submitted) {
             const std::string candidate{ newName.data() };
             if (!IsBlank(candidate)) {
                 MorphSetting added;
@@ -420,10 +592,9 @@ void DebugMenu::DrawMorphEditor(std::vector<MorphSetting>& morphs, std::array<ch
             }
         }
     } else {
-        ImGuiMCP::TextColored(kAmber, "Morph limit reached; remove an entry to add another.");
+        ImGuiMCP::TextColored(kAmber, "Slider limit reached; remove one to add another.");
     }
-
-    ImGuiMCP::TextDisabled("Changes apply when you press Apply settings; the INI is rewritten.");
+    ImGuiMCP::TextDisabled("%zu of %zu sliders", morphs.size(), kMaximumMorphs);
 }
 
 void DebugMenu::SetNpcMessage(std::string message)

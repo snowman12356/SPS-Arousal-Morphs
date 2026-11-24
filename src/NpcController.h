@@ -61,6 +61,8 @@ private:
     SettingsStore& settings_;
     // Settings::sceneMode from the latest Tick, read by Process on the same thread.
     int sceneMode_{ kSceneFollowRole };
+    // Settings::npcReadSeconds from the latest Tick.
+    std::chrono::milliseconds readInterval_{ 1000 };
     std::unordered_map<std::string, State> states_;
     Clock::time_point lastTick_{};
     std::unordered_map<std::string, std::string> lastLoggedText_;
