@@ -244,8 +244,13 @@ void LengthController::Tick(std::uint64_t generation)
     // penetrates. In any other scene stage (receiving, or no role) the morph
     // stays at the length it had before the scene. Older SPS reports no role,
     // so every scene holds full extension.
+    // Settings::sceneMode can override that: always full, or always the
+    // pre-scene length.
     const bool sceneHoldsFull = sceneActive &&
-        (!sps_.HasSceneRole() || sps_.ReadPlayerSceneRole() == SPS::API::SceneRole::Penetrating);
+        (settings.sceneMode == kSceneAlwaysExtended ||
+            (settings.sceneMode == kSceneFollowRole &&
+                (!sps_.HasSceneRole() ||
+                    sps_.ReadPlayerSceneRole() == SPS::API::SceneRole::Penetrating)));
     float arousalTarget = kFullyRetracted;
     if (arousal >= settings.fullyExtendedArousal) {
         arousalTarget = kFullyExtended;

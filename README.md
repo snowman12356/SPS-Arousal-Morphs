@@ -85,14 +85,21 @@ so the shaft may go CBPC while the morphs are still extending, and SPS's
 step-by-step CBPC rise then plays during the growth, which looks less smooth. The checkbox
 saves immediately and releases any active hold.
 
-During a SexLab or OStim scene, the addon makes no SMP request. With SPS API V4
-(player) and V5 (NPCs), the sliders are held at `ExtendedValue` only while SPS
-reports that actor as penetrating; while receiving, or while SPS has not
-identified a role, they stay at the length the arousal curve gave just before the
-scene started. With older SPS, every scene
-holds the sliders at `ExtendedValue`. Normal arousal behaviour returns when
-SPS's scene-end delay finishes. This needs SPS's `SexLabPPlusOverride` or
-`OStimOverride` setting on for that framework.
+During a SexLab or OStim scene, the addon makes no SMP request. What the sliders
+do is set by **During a scene** on the Length Control page (INI `[General]
+SceneMode`), for the player and for NPCs:
+
+- **Follow role** (`SceneMode=0`, default): with SPS API V4 (player) and V5 (NPCs),
+  the sliders are held at `ExtendedValue` only while SPS reports that actor as
+  penetrating; while receiving, or while SPS has not identified a role, they stay
+  at the length the arousal curve gave just before the scene started. With older
+  SPS, every scene holds `ExtendedValue`.
+- **Always fully extended** (`SceneMode=1`): `ExtendedValue` for the whole scene.
+- **Keep the length from before the scene** (`SceneMode=2`): the length never
+  changes during a scene.
+
+Normal arousal behaviour returns when SPS's scene-end delay finishes. This needs
+SPS's `SexLabPPlusOverride` or `OStimOverride` setting on for that framework.
 
 With SPS API V4 the SMP hold also asks SPS to delay its CBPC rise, and the addon
 listens for SPS's arousal events, so a sudden arousal jump is held before SPS

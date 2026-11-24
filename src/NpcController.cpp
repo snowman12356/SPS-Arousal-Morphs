@@ -109,6 +109,7 @@ void NpcController::Tick()
     lastTick_ = now;
 
     const auto settings = settings_.Snapshot();
+    sceneMode_ = settings.sceneMode;
     for (const auto& npc : settings.npcs) {
         Process(npc, elapsed, now);
     }
@@ -189,8 +190,11 @@ void NpcController::Process(const NpcSetting& npc, float elapsed, Clock::time_po
     // With SPS V5 a scene holds full extension only while this NPC penetrates;
     // in any other stage it keeps the length it had before the scene. Older SPS
     // reports no NPC role, so every scene holds full extension.
+    // Settings::sceneMode can override that (always full, or always pre-scene length).
     const bool sceneHoldsFull = inScene &&
-        (!sps_.HasActorSceneRole() || state.role == SPS::API::SceneRole::Penetrating);
+        (sceneMode_ == kSceneAlwaysExtended ||
+            (sceneMode_ == kSceneFollowRole &&
+                (!sps_.HasActorSceneRole() || state.role == SPS::API::SceneRole::Penetrating)));
     if (inScene && !sceneHoldsFull && !state.hasArousal && !state.preSceneTarget) {
         Publish(key, state, "Waiting for arousal from SPS");
         return;

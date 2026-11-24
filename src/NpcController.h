@@ -59,6 +59,8 @@ private:
     SPSBridge& sps_;
     MorphController& morphs_;
     SettingsStore& settings_;
+    // Settings::sceneMode from the latest Tick, read by Process on the same thread.
+    int sceneMode_{ kSceneFollowRole };
     std::unordered_map<std::string, State> states_;
     Clock::time_point lastTick_{};
     std::unordered_map<std::string, std::string> lastLoggedText_;

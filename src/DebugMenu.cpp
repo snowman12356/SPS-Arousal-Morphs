@@ -130,6 +130,20 @@ void DebugMenu::Draw()
         }
     }
 
+    // Scene behaviour for the player and NPCs. Saves at once, like the two above.
+    ImGuiMCP::TextWrapped("During a scene:");
+    int sceneMode = saved.sceneMode;
+    bool sceneChanged = ImGuiMCP::RadioButton("Follow role (full only while penetrating)", &sceneMode, kSceneFollowRole);
+    sceneChanged |= ImGuiMCP::RadioButton("Always fully extended", &sceneMode, kSceneAlwaysExtended);
+    sceneChanged |= ImGuiMCP::RadioButton("Keep the length from before the scene", &sceneMode, kSceneKeepLength);
+    if (sceneChanged && sceneMode != saved.sceneMode) {
+        auto updated = settings_.Snapshot();
+        updated.sceneMode = sceneMode;
+        if (settings_.UpdateAndSave(std::move(updated))) {
+            draft_.sceneMode = sceneMode;
+        }
+    }
+
     ImGuiMCP::TextWrapped(
         "The addon drives the BodyMorphs listed below. With the SMP hold on, it asks SPS to keep SMP active "
         "until extension finishes. With it off, SPS alone decides physics.");
@@ -150,6 +164,7 @@ void DebugMenu::Draw()
         const auto current = settings_.Snapshot();
         draft_.enabled = current.enabled;
         draft_.smpHold = current.smpHold;
+        draft_.sceneMode = current.sceneMode;
         SavePlayerDraft();
     }
     ImGuiMCP::SameLine();

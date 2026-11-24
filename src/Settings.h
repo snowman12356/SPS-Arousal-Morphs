@@ -37,9 +37,18 @@ struct NpcSetting {
 inline constexpr std::size_t kMaximumNpcs = 32;
 inline constexpr std::size_t kMaximumMorphs = 32;
 
+// What the sliders do while SexLab/OStim has an actor in a scene. Stored as an
+// int in the INI ([General] SceneMode) so the menu can bind it to radio buttons.
+enum SceneMode : int {
+    kSceneFollowRole = 0,       // full only while penetrating (default; old SPS: always full)
+    kSceneAlwaysExtended = 1,   // full for the whole scene
+    kSceneKeepLength = 2        // keep the length from just before the scene
+};
+
 struct Settings {
     bool enabled{ false };
     bool smpHold{ true };
+    int sceneMode{ kSceneFollowRole };
     float startGrowingArousal{ 20.0F };
     float fullyExtendedArousal{ 60.0F };
     float extensionSeconds{ 3.0F };
