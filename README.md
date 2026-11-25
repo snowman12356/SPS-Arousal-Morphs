@@ -15,7 +15,7 @@ visible before physics changes.
 
 ## Requirements
 
-- Skyrim AE 1.6.1170 with matching SKSE
+- SKSE
 - Address Library for SKSE Plugins
 - Schlong Physics Swapper 2.1.0.2 or newer with compatibility API V2
 - For NPC pages: a Schlong Physics Swapper build with compatibility API V3
